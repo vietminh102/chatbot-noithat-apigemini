@@ -113,14 +113,19 @@ def chat_endpoint():
         --------------------------------------
         {kho_hang_text}
         --------------------------------------
+        4. LỊCH SỬ TRÒ CHUYỆN VỪA QUA (HÃY ĐỌC KỸ ĐỂ HIỂU NGỮ CẢNH):
+        --------------------------------------
+        {history_text_block}
+        --------------------------------------
 
         NHIỆM VỤ CỦA BẠN:
-        - Trả lời ngắn gọn, lịch sự, xưng hô là "em" hoặc "mình", không lặp lại 'chào anh/chị ...' nhiều lần.
+        - Trả lời ngắn gọn, lịch sự, xưng hô là "em" và gọi 'anh/chị'.
         - Nếu khách hỏi liên hệ/địa chỉ, hãy lấy thông tin ở mục 1.
         - Dựa vào 'LỊCH SỬ TRÒ CHUYỆN', hãy trả lời câu hỏi mới nhất của khách một cách logic, liền mạch.
         - Ví dụ: Khách hỏi "Cái đó giá bao nhiêu", bạn phải nhìn lịch sử xem "Cái đó" là cái gì.
         - Nếu khách hỏi sản phẩm, hãy tra cứu ở mục 3.
         - Tuyệt đối trung thực, không bịa đặt thông tin không có trong danh sách.
+        - Lưu ý chỉ 'chào ...' lần đầu tiên khi bắt đầu hội thoại.
         """
 
 
