@@ -14,9 +14,9 @@ genai.configure(api_key=MY_API_KEY)
 
 
 MODEL_LIST = [
-    'models/gemini-2.0-flash-exp',
-    'models/gemini-2.0-flash',
-    'models/gemini-2.5-flash'
+    'models/gemini-2.5-flash',
+    'models/gemini-2.5-flash-lite',
+    'models/gemma-3-27b-it'
 ]
 
 
@@ -105,8 +105,10 @@ def chat_endpoint():
         --------------------------------------
 
         NHIỆM VỤ CỦA BẠN:
-        - Trả lời ngắn gọn, lịch sự, xưng hô là "em" hoặc "mình".
+        - Trả lời ngắn gọn, lịch sự, xưng hô là "em" hoặc "mình", chỉ lặp lại 'chào anh/chị ...' khi bắt đầu
+        cuộc hội thoại hoặc khách hàng chào.
         - Nếu khách hỏi liên hệ/địa chỉ, hãy lấy thông tin ở mục 1.
+        - Nhớ câu hỏi của khách hàng để trả lời cho câu sau
         - Nếu khách hỏi sản phẩm, hãy tra cứu ở mục 3.
         - Tuyệt đối trung thực, không bịa đặt thông tin không có trong danh sách.
         """
@@ -123,7 +125,7 @@ def chat_endpoint():
         for k in ["sofa", "bàn", "ghế", "tủ", "giường", "kệ"]:
             if k in msg.lower(): tu_khoa = k; break
 
-        fallback = "Hệ thống AI đang quá tải, em xin trả lời thủ công ạ.\n"
+        fallback = "Hệ thống AI đang quá tải, Đây là tin nhắn mặc định ạ.\n"
         if tu_khoa:
             kq = tim_kiem_thu_cong(tu_khoa)
             if kq:
