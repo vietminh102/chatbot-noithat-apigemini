@@ -8,10 +8,8 @@ app = Flask(__name__)
 CORS(app)
 
 
-# CẤU HÌNH API
 MY_API_KEY = os.environ.get("GEMINI_API_KEY", "AIzaSyCm_lnruxp2gU69MmSamPhuhzwkXPPWKQI")
 genai.configure(api_key=MY_API_KEY)
-
 
 MODEL_LIST = [
     'models/gemini-2.5-flash',
@@ -19,6 +17,8 @@ MODEL_LIST = [
     'models/gemma-3-27b-it'
 ]
 
+
+chat_history_storage = {}
 
 
 FILE_CSV = 'danh_sach_san_pham.csv'
@@ -28,29 +28,29 @@ kho_hang_text = ""
 if os.path.exists(FILE_CSV):
     try:
         df_products = pd.read_csv(FILE_CSV)
-        # Tạo văn bản cho AI đọc
+        if 'Link' not in df_products.columns: df_products['Link'] = ''
+
+        df_products.fillna('', inplace=True)
+
         for _, row in df_products.iterrows():
             try:
                 gia = f"{int(row['Price']):,}"
             except:
                 gia = row['Price']
-            kho_hang_text += f"- {row['Name']} | Giá: {gia} VNĐ | {row['Description']}\n"
 
-        # Xử lý dữ liệu trống cho tìm kiếm thủ công
-        df_products.fillna('', inplace=True)
-        print(f"✅ Đã nạp {len(df_products)} sản phẩm.")
+            link_info = f"| Link: {row['Link']}" if row['Link'] else ""
+
+            kho_hang_text += f"- {row['Name']} | Giá: {gia} VNĐ {link_info} | {row['Description']}\n"
+
     except Exception as e:
         print(f"❌ Lỗi CSV: {e}")
 
 
-# 3. HÀM TÌM KIẾM THỦ CÔNG
 def tim_kiem_thu_cong(tu_khoa):
     if df_products.empty: return ""
     tu_khoa = tu_khoa.lower()
-
     mask = (df_products['Name'].str.lower().str.contains(tu_khoa, na=False) |
             df_products['Description'].str.lower().str.contains(tu_khoa, na=False))
-
     ket_qua = df_products[mask].head(5)
     ds = []
     for _, row in ket_qua.iterrows():
@@ -58,12 +58,11 @@ def tim_kiem_thu_cong(tu_khoa):
             gia = f"{int(row['Price']):,}"
         except:
             gia = row['Price']
-        ds.append(f"- {row['Name']} (Giá: {gia} VNĐ)")
+        link_str = f"- Link: {row['Link']}" if row['Link'] else ""
+        ds.append(f"- {row['Name']} (Giá: {gia} VNĐ) {link_str}")
     return "\n".join(ds)
 
 
-
-# HÀM GỌI AI ĐA LUỒNG
 def goi_ai_thong_minh(prompt):
     loi_cuoi = ""
     for model_name in MODEL_LIST:
@@ -77,13 +76,23 @@ def goi_ai_thong_minh(prompt):
     raise Exception(loi_cuoi)
 
 
-
-# XỬ LÝ CHAT CHÍNH
 @app.route('/api/chat', methods=['POST'])
 def chat_endpoint():
     data = request.json
     msg = data.get('message', '')
     if not msg: return jsonify({"reply": "..."})
+
+
+    user_id = request.headers.get('X-Forwarded-For', request.remote_addr)
+
+    if user_id not in chat_history_storage:
+        chat_history_storage[user_id] = []
+
+    recent_history = chat_history_storage[user_id][-12:]
+    history_text_block = ""
+    for turn in recent_history:
+        role = "Khách hàng" if turn['role'] == 'user' else "Nhân viên tư vấn"
+        history_text_block += f"{role}: {turn['content']}\n"
 
     system_prompt = f"""
         Bạn là trí tuệ nhân tạo tư vấn của website Nội Thất Gỗ (NOITHATGO.VN).
@@ -108,15 +117,20 @@ def chat_endpoint():
         NHIỆM VỤ CỦA BẠN:
         - Trả lời ngắn gọn, lịch sự, xưng hô là "em" hoặc "mình", không lặp lại 'chào anh/chị ...' nhiều lần.
         - Nếu khách hỏi liên hệ/địa chỉ, hãy lấy thông tin ở mục 1.
-        - hãy ghi nhớ các câu hỏi của khách để trả lời có logic và theo một mạch.
+        - Dựa vào 'LỊCH SỬ TRÒ CHUYỆN', hãy trả lời câu hỏi mới nhất của khách một cách logic, liền mạch.
+        - Ví dụ: Khách hỏi "Cái đó giá bao nhiêu", bạn phải nhìn lịch sử xem "Cái đó" là cái gì.
         - Nếu khách hỏi sản phẩm, hãy tra cứu ở mục 3.
         - Tuyệt đối trung thực, không bịa đặt thông tin không có trong danh sách.
         """
 
 
-
     try:
-        reply = goi_ai_thong_minh(f"{system_prompt}\n\nKhách: {msg}")
+        full_prompt = f"{system_prompt}\n\nKhách hàng (mới nhất): {msg}\nNhân viên tư vấn:"
+        reply = goi_ai_thong_minh(full_prompt)
+
+
+        chat_history_storage[user_id].append({"role": "user", "content": msg})
+        chat_history_storage[user_id].append({"role": "bot", "content": reply})
         return jsonify({"reply": reply})
 
     except Exception as e:
