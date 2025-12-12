@@ -3,6 +3,8 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import pandas as pd
 import os
+import csv
+from datetime import datetime
 
 app = Flask(__name__)
 CORS(app)
@@ -18,7 +20,47 @@ MODEL_LIST = [
 ]
 
 
-chat_history_storage = {}
+HISTORY_FILE = 'lich_su_chat_khach_hang.csv'
+
+
+
+def khoi_tao_file_lich_su():
+    if not os.path.exists(HISTORY_FILE):
+        with open(HISTORY_FILE, mode='w', newline='', encoding='utf-8-sig') as f:
+            writer = csv.writer(f)
+            writer.writerow(['UserID', 'Time', 'Role', 'Content'])
+
+
+def luu_tin_nhan_vao_csv(user_id, role, content):
+    khoi_tao_file_lich_su()
+    with open(HISTORY_FILE, mode='a', newline='', encoding='utf-8-sig') as f:
+        writer = csv.writer(f)
+        writer.writerow([user_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), role, content])
+
+
+def lay_lich_su_tu_csv(user_id):
+    if not os.path.exists(HISTORY_FILE):
+        return ""
+
+    try:
+
+        df = pd.read_csv(HISTORY_FILE)
+
+        df['UserID'] = df['UserID'].astype(str)
+        user_history = df[df['UserID'] == str(user_id)]
+
+
+        recent_history = user_history.tail(10)
+
+        history_text = ""
+        for _, row in recent_history.iterrows():
+            role_name = "Khách hàng" if row['Role'] == 'user' else "Nhân viên tư vấn"
+            history_text += f"{role_name}: {row['Content']}\n"
+
+        return history_text
+    except Exception as e:
+        print(f"Lỗi đọc lịch sử: {e}")
+        return ""
 
 
 FILE_CSV = 'danh_sach_san_pham.csv'
@@ -29,7 +71,6 @@ if os.path.exists(FILE_CSV):
     try:
         df_products = pd.read_csv(FILE_CSV)
         if 'Link' not in df_products.columns: df_products['Link'] = ''
-
         df_products.fillna('', inplace=True)
 
         for _, row in df_products.iterrows():
@@ -37,13 +78,10 @@ if os.path.exists(FILE_CSV):
                 gia = f"{int(row['Price']):,}"
             except:
                 gia = row['Price']
-
             link_info = f"| Link: {row['Link']}" if row['Link'] else ""
-
             kho_hang_text += f"- {row['Name']} | Giá: {gia} VNĐ {link_info} | {row['Description']}\n"
-
     except Exception as e:
-        print(f"❌ Lỗi CSV: {e}")
+        print(f"❌ Lỗi CSV Sản phẩm: {e}")
 
 
 def tim_kiem_thu_cong(tu_khoa):
@@ -76,66 +114,59 @@ def goi_ai_thong_minh(prompt):
     raise Exception(loi_cuoi)
 
 
+
 @app.route('/api/chat', methods=['POST'])
 def chat_endpoint():
     data = request.json
     msg = data.get('message', '')
+
+    user_id = data.get('user_id')
+    if not user_id or user_id == "guest_unknown":
+        user_id = request.headers.get('X-Forwarded-For', request.remote_addr)
+
     if not msg: return jsonify({"reply": "..."})
 
 
-    user_id = request.headers.get('X-Forwarded-For', request.remote_addr)
-
-    if user_id not in chat_history_storage:
-        chat_history_storage[user_id] = []
-
-    recent_history = chat_history_storage[user_id][-12:]
-    history_text_block = ""
-    for turn in recent_history:
-        role = "Khách hàng" if turn['role'] == 'user' else "Nhân viên tư vấn"
-        history_text_block += f"{role}: {turn['content']}\n"
+    history_text_block = lay_lich_su_tu_csv(user_id)
 
     system_prompt = f"""
         Bạn là trí tuệ nhân tạo tư vấn của website Nội Thất Gỗ (NOITHATGO.VN).
 
-        1. THÔNG TIN CỬA HÀNG (Dùng để trả lời khi khách hỏi địa chỉ, liên hệ):
-        - Hotline Mua Hàng / CSKH: 0968 012 687
-        - Email hỗ trợ: mviet1304@gmail.vn
-        - Website: noithatgo.vn
-        - Địa chỉ showroom: 1234 đường Láng, Cầu Giấy, Hà Nội
-        - Giờ làm việc: 8h00 - 21h00 tất cả các ngày trong tuần.
+        1. THÔNG TIN CỬA HÀNG:
+        - Hotline: 0968 012 687 | Email: mviet1304@gmail.vn
+        - Showroom: 1234 đường Láng, Cầu Giấy, Hà Nội
+        - Giờ làm việc: 8h00 - 21h00
 
-        2. CHÍNH SÁCH BÁN HÀNG (Trả lời khi khách hỏi ship, bảo hành):
-        - Vận chuyển: Miễn phí nội thành, ngoại thành tính phí theo đơn vị vận chuyển.
-        - Bảo hành: Sản phẩm gỗ bảo hành 12 tháng, bảo trì trọn đời.
-        - Trong Hà Nội vận chuyển  và lắp đặt trong ngày, các tỉnh khác vận chuyển 2-3 ngày
+        2. CHÍNH SÁCH:
+        - Vận chuyển: Miễn phí nội thành HN (trong ngày). Ngoại thành/Tỉnh 2-3 ngày.
+        - Bảo hành: 12 tháng, bảo trì trọn đời.
 
         3. DANH SÁCH SẢN PHẨM TRONG KHO:
         --------------------------------------
         {kho_hang_text}
         --------------------------------------
-        4. LỊCH SỬ TRÒ CHUYỆN VỪA QUA (HÃY ĐỌC KỸ ĐỂ HIỂU NGỮ CẢNH):
+
+        4. LỊCH SỬ TRÒ CHUYỆN CŨ (HÃY ĐỌC ĐỂ GIỮ MẠCH LOGIC):
         --------------------------------------
         {history_text_block}
         --------------------------------------
 
-        NHIỆM VỤ CỦA BẠN:
-        - Trả lời ngắn gọn, lịch sự, xưng hô là "em" và gọi 'anh/chị'.
-        - Nếu khách hỏi liên hệ/địa chỉ, hãy lấy thông tin ở mục 1.
-        - Dựa vào 'LỊCH SỬ TRÒ CHUYỆN', hãy trả lời câu hỏi mới nhất của khách một cách logic, liền mạch.
-        - Ví dụ: Khách hỏi "Cái đó giá bao nhiêu", bạn phải nhìn lịch sử xem "Cái đó" là cái gì.
-        - Nếu khách hỏi sản phẩm, hãy tra cứu ở mục 3.
-        - Tuyệt đối trung thực, không bịa đặt thông tin không có trong danh sách.
-        - Lưu ý chỉ 'chào ...' lần đầu tiên khi bắt đầu hội thoại.
+        NHIỆM VỤ:
+        - Trả lời ngắn gọn đúng trọng tâm câu hỏi.
+        - Dựa vào 'LỊCH SỬ TRÒ CHUYỆN', hãy trả lời tiếp nối mạch câu chuyện.
+        - Nếu lịch sử trống (lần đầu chat), hãy chào hỏi. Nếu đã chat rồi, KHÔNG chào lại.
+        - Ví dụ: Khách hỏi "Cái đó giá bao nhiêu", hãy xem lịch sử để biết "Cái đó" là gì.
+        - Xưng "em", gọi khách là "anh/chị".
+        - Tuyệt đối trung thực với dữ liệu kho hàng.
         """
-
 
     try:
         full_prompt = f"{system_prompt}\n\nKhách hàng (mới nhất): {msg}\nNhân viên tư vấn:"
         reply = goi_ai_thong_minh(full_prompt)
 
 
-        chat_history_storage[user_id].append({"role": "user", "content": msg})
-        chat_history_storage[user_id].append({"role": "bot", "content": reply})
+        luu_tin_nhan_vao_csv(user_id, "user", msg)
+        luu_tin_nhan_vao_csv(user_id, "bot", reply)
         return jsonify({"reply": reply})
 
     except Exception as e:
@@ -144,15 +175,15 @@ def chat_endpoint():
         for k in ["sofa", "bàn", "ghế", "tủ", "giường", "kệ"]:
             if k in msg.lower(): tu_khoa = k; break
 
-        fallback = "Hệ thống AI đang quá tải, Đây là tin nhắn mặc định ạ.\n"
+        fallback = "Hệ thống AI đang quá tải, em xin phép trả lời mặc định ạ.\n"
         if tu_khoa:
             kq = tim_kiem_thu_cong(tu_khoa)
             if kq:
                 fallback += f"Em tìm thấy các mẫu '{tu_khoa}' này:\n{kq}"
             else:
-                fallback += f"Em chưa thấy mẫu '{tu_khoa}' nào trong kho ạ."
+                fallback += f"Em chưa thấy mẫu '{tu_khoa}' nào."
         else:
-            fallback += "Anh/chị vui lòng gọi Hotline 0968.012.687 để được hỗ trợ nhanh nhất ạ."
+            fallback += "Anh/chị vui lòng gọi Hotline 0968.012.687 để được hỗ trợ ạ."
 
         return jsonify({"reply": fallback})
 
