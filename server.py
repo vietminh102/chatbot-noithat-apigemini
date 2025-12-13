@@ -66,22 +66,53 @@ def lay_lich_su_tu_csv(user_id):
 FILE_CSV = 'danh_sach_san_pham.csv'
 df_products = pd.DataFrame()
 kho_hang_text = ""
+sales_text = ""  # Biến chứa danh sách khuyến mãi
 
 if os.path.exists(FILE_CSV):
     try:
         df_products = pd.read_csv(FILE_CSV)
+
+
         if 'Link' not in df_products.columns: df_products['Link'] = ''
+        if 'Discount' not in df_products.columns: df_products['Discount'] = 0
+
         df_products.fillna('', inplace=True)
 
         for _, row in df_products.iterrows():
+
             try:
-                gia = f"{int(row['Price']):,}"
+                gia_goc = int(row['Price'])
+                gia_fmt = f"{gia_goc:,}"
             except:
-                gia = row['Price']
+                gia_goc = 0
+                gia_fmt = row['Price']
+
             link_info = f"| Link: {row['Link']}" if row['Link'] else ""
-            kho_hang_text += f"- {row['Name']} | Giá: {gia} VNĐ {link_info} | {row['Description']}\n"
+
+
+            try:
+                discount = int(row['Discount'])
+            except:
+                discount = 0
+
+            info_giam = f"(🔥 -{discount}%)" if discount > 0 else ""
+            kho_hang_text += f"- {row['Name']} | Giá: {gia_fmt} VNĐ {info_giam} {link_info} | {row['Description']}\n"
+
+            if discount > 0:
+                try:
+                    gia_sau_giam = int(gia_goc * (100 - discount) / 100)
+                    gia_sau_giam_fmt = f"{gia_sau_giam:,}"
+                except:
+                    gia_sau_giam_fmt = "???"
+
+                sales_text += f"🏆 [SALE] {row['Name']} | Gốc: {gia_fmt} | GIẢM {discount}% CÒN: {gia_sau_giam_fmt} VNĐ {link_info}\n"
+
+
+
     except Exception as e:
-        print(f"❌ Lỗi CSV Sản phẩm: {e}")
+        print(f"❌ Lỗi đọc CSV: {e}")
+else:
+    print("⚠️ Không tìm thấy file danh_sach_san_pham.csv")
 
 
 def tim_kiem_thu_cong(tu_khoa):
@@ -145,8 +176,10 @@ def chat_endpoint():
         --------------------------------------
         {kho_hang_text}
         --------------------------------------
+        4. SẢN PHẨM KHUYẾN MÃI (SALE):
+        {sales_text}
 
-        4. LỊCH SỬ TRÒ CHUYỆN CŨ (HÃY ĐỌC ĐỂ GIỮ MẠCH LOGIC):
+        5. LỊCH SỬ TRÒ CHUYỆN CŨ (HÃY ĐỌC ĐỂ GIỮ MẠCH LOGIC):
         --------------------------------------
         {history_text_block}
         --------------------------------------
@@ -155,6 +188,8 @@ def chat_endpoint():
         - Trả lời ngắn gọn đúng trọng tâm câu hỏi.
         - Dựa vào 'LỊCH SỬ TRÒ CHUYỆN', hãy trả lời tiếp nối mạch câu chuyện.
         - Nếu lịch sử trống (lần đầu chat), hãy chào hỏi. Nếu đã chat rồi, KHÔNG chào lại.
+        - Nếu khách hỏi "khuyến mãi , sales, giảm giá",  giới thiệu một số sản phẩm ở mục số 4.
+        - Tự tính giá sau giảm để tư vấn cho khách (Giá gốc - Discount).
         - Ví dụ: Khách hỏi "Cái đó giá bao nhiêu", hãy xem lịch sử để biết "Cái đó" là gì.
         - Xưng "em", gọi khách là "anh/chị".
         - Tuyệt đối trung thực với dữ liệu kho hàng.
