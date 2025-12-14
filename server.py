@@ -1,3 +1,5 @@
+import time
+
 import google.generativeai as genai
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -50,7 +52,7 @@ def lay_lich_su_tu_csv(user_id):
         user_history = df[df['UserID'] == str(user_id)]
 
 
-        recent_history = user_history.tail(10)
+        recent_history = user_history.tail(5)
 
         history_text = ""
         for _, row in recent_history.iterrows():
@@ -65,29 +67,27 @@ def lay_lich_su_tu_csv(user_id):
 
 FILE_CSV = 'danh_sach_san_pham.csv'
 df_products = pd.DataFrame()
-kho_hang_text = ""
-sales_text = ""  # Biến chứa danh sách khuyến mãi
+product_list = ""
 
 if os.path.exists(FILE_CSV):
     try:
         df_products = pd.read_csv(FILE_CSV)
 
-
+        # Xử lý các cột thiếu
         if 'Link' not in df_products.columns: df_products['Link'] = ''
         if 'Discount' not in df_products.columns: df_products['Discount'] = 0
 
         df_products.fillna('', inplace=True)
 
         for _, row in df_products.iterrows():
-
             try:
                 gia_goc = int(row['Price'])
-                gia_fmt = f"{gia_goc:,}"
             except:
                 gia_goc = 0
-                gia_fmt = row['Price']
+            gia_fmt = f"{gia_goc:,}"
 
-            link_info = f"| Link: {row['Link']}" if row['Link'] else ""
+
+            link_info = f"[Link: {row['Link']}]" if row['Link'] else ""
 
 
             try:
@@ -95,8 +95,6 @@ if os.path.exists(FILE_CSV):
             except:
                 discount = 0
 
-            info_giam = f"(🔥 -{discount}%)" if discount > 0 else ""
-            kho_hang_text += f"- {row['Name']} | Giá: {gia_fmt} VNĐ {info_giam} {link_info} | {row['Description']}\n"
 
             if discount > 0:
                 try:
@@ -105,8 +103,14 @@ if os.path.exists(FILE_CSV):
                 except:
                     gia_sau_giam_fmt = "???"
 
-                sales_text += f"🏆 [SALE] {row['Name']} | Gốc: {gia_fmt} | GIẢM {discount}% CÒN: {gia_sau_giam_fmt} VNĐ {link_info}\n"
 
+                status_tag = f"🔥 [ĐANG SALE {discount}% - CÒN: {gia_sau_giam_fmt} VNĐ]"
+            else:
+
+                status_tag = ""
+
+
+            product_list += f"- Tên: {row['Name']} | Giá : {gia_fmt} VNĐ {status_tag} {link_info} | Mô tả: {row['Description']}\n"
 
 
     except Exception as e:
@@ -133,16 +137,24 @@ def tim_kiem_thu_cong(tu_khoa):
 
 
 def goi_ai_thong_minh(prompt):
-    loi_cuoi = ""
-    for model_name in MODEL_LIST:
-        try:
-            model = genai.GenerativeModel(model_name)
-            response = model.generate_content(prompt)
-            return response.text
-        except Exception as e:
-            loi_cuoi = str(e)
-            continue
-    raise Exception(loi_cuoi)
+    max_retries = 3
+
+    for attempt in range(max_retries):
+        for model_name in MODEL_LIST:
+            try:
+                model = genai.GenerativeModel(model_name)
+                response = model.generate_content(prompt)
+                return response.text
+            except Exception as e:
+                error_msg = str(e)
+                if "429" in error_msg or "Quota exceeded" in error_msg:
+                    print(f"⚠️ Quá tải (429). Đang chờ 10s để thử lại... (Lần {attempt + 1})")
+                    time.sleep(10)
+                    break
+                else:
+                    print(f"❌ Lỗi model {model_name}: {e}")
+                    continue
+    raise Exception("Hệ thống AI đang quá tải, vui lòng thử lại sau 1 phút.")
 
 
 
@@ -161,38 +173,36 @@ def chat_endpoint():
     history_text_block = lay_lich_su_tu_csv(user_id)
 
     system_prompt = f"""
-        Bạn là trí tuệ nhân tạo tư vấn của website Nội Thất Gỗ (NOITHATGO.VN).
+        VAI TRÒ: Bạn là nhân viên tư vấn chuyên nghiệp của Nội Thất Gỗ (NOITHATGO.VN).
 
-        1. THÔNG TIN CỬA HÀNG:
-        - Hotline: 0968 012 687 | Email: mviet1304@gmail.vn
-        - Showroom: 1234 đường Láng, Cầu Giấy, Hà Nội
-        - Giờ làm việc: 8h00 - 21h00
+        🛑 QUY TẮC TRẢ LỜI:
+        - Dựa vào LỊCH SỬ CHAT để đưa ra câu trả lời có logic.
+        - Khi khách hỏi về một loại sản phẩm (ví dụ "sofa", "bàn ăn"), hãy giới thiệu MỘT SỐ sản phẩm phù hợp trong danh sách "DỮ LIỆU KHO HÀNG" bên dưới.
+        - KHÔNG được chỉ chăm chăm giới thiệu hàng đang SALE. Hãy giới thiệu cả hàng thường và hàng Sale một cách công bằng.
+        - Nếu sản phẩm có thẻ [ĐANG SALE...], hãy báo giá đã giảm cho khách. Nếu không có thẻ đó, báo giá gốc.
+        - Trả lời ngắn gọn, liệt kê các mẫu đẹp nhất.
 
-        2. CHÍNH SÁCH:
-        - Vận chuyển: Miễn phí nội thành HN (trong ngày). Ngoại thành/Tỉnh 2-3 ngày.
-        - Bảo hành: 12 tháng, bảo trì trọn đời.
+        1. THÔNG TIN CỬA HÀNG (Dùng để trả lời khi khách hỏi địa chỉ, liên hệ):
+        - Hotline Mua Hàng / CSKH: 0968 012 687
+        - Email hỗ trợ: mviet1304@gmail.vn
+        - Website: noithatgo.vn
+        - Địa chỉ showroom: 1234 đường Láng, Cầu Giấy, Hà Nội
+        - Giờ làm việc: 8h00 - 21h00 tất cả các ngày trong tuần.
 
-        3. DANH SÁCH SẢN PHẨM TRONG KHO:
-        --------------------------------------
-        {kho_hang_text}
-        --------------------------------------
-        4. SẢN PHẨM KHUYẾN MÃI (SALE):
-        {sales_text}
+        2. CHÍNH SÁCH BÁN HÀNG (Trả lời khi khách hỏi ship, bảo hành):
+        - Vận chuyển: Miễn phí nội thành, ngoại thành tính phí theo đơn vị vận chuyển.
+        - Bảo hành: Sản phẩm gỗ bảo hành 12 tháng, bảo trì trọn đời.
+        - Trong Hà Nội vận chuyển  và lắp đặt trong ngày, các tỉnh khác vận chuyển 2-3 ngày
+        3. DỮ LIỆU KHO HÀNG (Tất cả sản phẩm)
+        {product_list}
 
-        5. LỊCH SỬ TRÒ CHUYỆN CŨ (HÃY ĐỌC ĐỂ GIỮ MẠCH LOGIC):
-        --------------------------------------
+        4. LỊCH SỬ CHAT 
         {history_text_block}
-        --------------------------------------
 
-        NHIỆM VỤ:
-        - Trả lời ngắn gọn đúng trọng tâm câu hỏi.
-        - Dựa vào 'LỊCH SỬ TRÒ CHUYỆN', hãy trả lời tiếp nối mạch câu chuyện.
-        - Nếu lịch sử trống (lần đầu chat), hãy chào hỏi. Nếu đã chat rồi, KHÔNG chào lại.
-        - Nếu khách hỏi "khuyến mãi , sales, giảm giá",  giới thiệu một số sản phẩm ở mục số 4.
-        - Tự tính giá sau giảm để tư vấn cho khách (Giá gốc - Discount).
-        - Ví dụ: Khách hỏi "Cái đó giá bao nhiêu", hãy xem lịch sử để biết "Cái đó" là gì.
-        - Xưng "em", gọi khách là "anh/chị".
-        - Tuyệt đối trung thực với dữ liệu kho hàng.
+        YÊU CẦU:
+        - Khách hỏi gì đáp đúng câu hỏi của khách. 
+        - Nếu khách hỏi "có sofa không", hãy liệt kê các mẫu sofa (kể cả không giảm giá).
+        - Chỉ tập trung vào SALE khi khách hỏi "có khuyến mãi không".
         """
 
     try:
